@@ -3,13 +3,25 @@ All the standerd error handling and comments are added by Copilot.
 */
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
+
+// A structure to hold the coordinates of an empty cell.
+typedef struct {
+    int row;
+    int col;
+} Position;
 
 // Function declarations.
 void print_board(unsigned char **board, unsigned char side_length, unsigned char base);
-int validate_board(unsigned char** board, unsigned char side_length, unsigned char base);
+int validate_finished_board(unsigned char** board, unsigned char side_length, unsigned char base);
+int validate_input(unsigned char **board, int side_length, int base, int row, int col);
+int solve(unsigned char **board, Position *unAssignInd, int N_unAssign, int side_length, int base);
+static double get_wall_seconds();
 
 
 int main(int argc, char *argv[]) {
+    double non_solving_time = get_wall_seconds();
+
     // Check if a filename is provided.
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <board_file>\n", argv[0]);
@@ -69,11 +81,56 @@ int main(int argc, char *argv[]) {
     }
     fclose(file);
 
+    // Count the number of empty cells.
+    int N_unAssign = 0;
+    for (int i = 0; i < side_length; i++) {
+        for (int j = 0; j < side_length; j++) {
+            if (board[i][j] == 0) {
+                N_unAssign++;
+            }
+        }
+    }
 
-    
-    // Validate the board.
-    /*
-    int result = validate_board(board, side_length, base);
+    // Create an array to store the positions of empty cells.
+    Position *unAssignInd = malloc(N_unAssign * sizeof(Position));
+    if (unAssignInd == NULL) {
+        fprintf(stderr, "Memory allocation failed\n");
+        // Free the allocated board memory before exiting.
+        for (int i = 0; i < side_length; i++) {
+            free(board[i]);
+        }
+        free(board);
+        return 1;
+    }
+
+    // Fill the array with the positions of empty cells.
+    int count = 0;
+    for (int i = 0; i < side_length; i++) {
+        for (int j = 0; j < side_length; j++) {
+            if (board[i][j] == 0) {
+                unAssignInd[count].row = i;
+                unAssignInd[count].col = j;
+                count++;
+            }
+        }
+    }
+
+    // Finish the timer for reading the file and preparing the board.
+    non_solving_time = get_wall_seconds() - non_solving_time;
+
+    double solving_time = get_wall_seconds();
+
+    // Solve the Sudoku board using backtracking.
+    if (solve(board, unAssignInd, N_unAssign, side_length, base)) {
+        printf("Board is solved\n");
+    } else {
+        printf("No solution found\n");
+    }
+    solving_time = get_wall_seconds() - solving_time;
+
+
+    // Validate the finished board.
+    int result = validate_finished_board(board, side_length, base);
     if (result == 1) {
         fprintf(stderr, "Invalid row sum\n");
     } else if (result == 2) {
@@ -81,27 +138,85 @@ int main(int argc, char *argv[]) {
     } else if (result == 3) {
         fprintf(stderr, "Invalid block sum\n");
     } else {
-        printf("Board is valid\n");
+        printf("Board passed the last test!\n");
+        printf("Non-solving time: %.6f seconds\n", non_solving_time);
+        printf("Solving time: %.6f seconds\n", solving_time);
     }
-    */
+    
 
 
-    // Print board information and the Sudoku board.
-    printf("Board Base: %d, Side Length: %d\n", base, side_length);
-    printf("Board:\n");
-    print_board(board, side_length, base);
+    // Print the solved board.
+    // printf("Board:\n");
+    // print_board(board, side_length, base);
 
     // Free the allocated memory.
     for (int i = 0; i < side_length; i++) {
         free(board[i]);
     }
     free(board);
+    free(unAssignInd);
     
     return 0;
 }
 
 
-int validate_board(unsigned char** board, unsigned char side_length, unsigned char base) {
+// Validates the board after placing a number at (row, col).
+// Returns 1 if valid, 0 if there is a duplicate in the row, column, or sub-box.
+int validate_input(unsigned char **board, int side_length, int base, int row, int col) {
+    int num = board[row][col];
+    if (num == 0)
+        return 1; // An empty cell is considered valid.
+
+    // Check the row for duplicates.
+    for (int j = 0; j < side_length; j++) {
+        if (j != col && board[row][j] == num)
+            return 0;
+    }
+    // Check the column for duplicates.
+    for (int i = 0; i < side_length; i++) {
+        if (i != row && board[i][col] == num)
+            return 0;
+    }
+    // Check the sub-box.
+    int startRow = row - row % base;
+    int startCol = col - col % base;
+    for (int i = startRow; i < startRow + base; i++) {
+        for (int j = startCol; j < startCol + base; j++) {
+            if ((i != row || j != col) && board[i][j] == num)
+                return 0;
+        }
+    }
+    return 1;
+}
+
+// Recursively solves the Sudoku board using backtracking.
+// unAssignInd is an array of empty cell positions, and N_unAssign is the number of such cells left.
+int solve(unsigned char **board, Position *unAssignInd, int N_unAssign, int side_length, int base) {
+    // Base case: no unassigned positions remain.
+    if (N_unAssign == 0)
+        return 1;
+    
+    // Get the next empty cell from the unassigned list.
+    Position pos = unAssignInd[N_unAssign - 1];
+    int row = pos.row;
+    int col = pos.col;
+    
+    // Try every possible value from 1 to side_length.
+    for (int val = 1; val <= side_length; val++) {
+        board[row][col] = val; // Set the guess.
+        if (validate_input(board, side_length, base, row, col)) {
+            // Recursively try to solve with one fewer unassigned cell.
+            if (solve(board, unAssignInd, N_unAssign - 1, side_length, base))
+                return 1;
+        }
+    }
+    // If no value works, reset the cell and backtrack.
+    board[row][col] = 0;
+    return 0;
+}
+
+
+int validate_finished_board(unsigned char** board, unsigned char side_length, unsigned char base) {
     // Calculate the target sum for each row, column, and block.
     int target_sum = side_length * (side_length + 1) / 2;
     int row_sum, col_sum, block_sum;
@@ -134,20 +249,17 @@ int validate_board(unsigned char** board, unsigned char side_length, unsigned ch
             if (block_sum != target_sum) return 3;
         }
     }
-
+    return 0;
 }
 
 
-
-
-
-
-
-
-
-
-
-
+// Taken from Lab6 Task 02!
+static double get_wall_seconds() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    double seconds = tv.tv_sec + (double)tv.tv_usec / 1000000;
+    return seconds;
+  }
 
 // _______________________________________________________________________________________
 // _______________________________________________________________________________________
