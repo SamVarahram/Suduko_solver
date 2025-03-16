@@ -7,15 +7,15 @@ All the standerd error handling and comments are added by Copilot.
 
 // A structure to hold the coordinates of an empty cell.
 typedef struct {
-    int row;
-    int col;
+    unsigned char row;
+    unsigned char col;
 } Position;
 
 // Function declarations.
 void print_board(unsigned char **board, unsigned char side_length, unsigned char base);
 int validate_finished_board(unsigned char** board, unsigned char side_length, unsigned char base);
-int validate_input(unsigned char **board, int side_length, int base, int row, int col);
-int solve(unsigned char **board, Position *unAssignInd, int N_unAssign, int side_length, int base);
+int validate_input(unsigned char **board, unsigned char side_length, unsigned char base, unsigned char row, unsigned char col);
+int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base);
 static double get_wall_seconds();
 
 
@@ -52,7 +52,7 @@ int main(int argc, char *argv[]) {
         fclose(file);
         return 1;
     }
-    for (int i = 0; i < side_length; i++) {
+    for (unsigned char i = 0; i < side_length; i++) {
         board[i] = malloc(side_length * sizeof(unsigned char));
         if (board[i] == NULL) {
             fprintf(stderr, "Memory allocation failed\n");
@@ -67,11 +67,11 @@ int main(int argc, char *argv[]) {
     }
 
     // Read the board data from the file into the matrix.
-    for (int i = 0; i < side_length; i++) {
+    for (unsigned char i = 0; i < side_length; i++) {
         if (fread(board[i], sizeof(unsigned char), side_length, file) != side_length) {
             fprintf(stderr, "Error reading board data\n");
             // Free allocated memory on error.
-            for (int j = 0; j < side_length; j++) {
+            for (unsigned char j = 0; j < side_length; j++) {
                 free(board[j]);
             }
             free(board);
@@ -82,9 +82,9 @@ int main(int argc, char *argv[]) {
     fclose(file);
 
     // Count the number of empty cells.
-    int N_unAssign = 0;
-    for (int i = 0; i < side_length; i++) {
-        for (int j = 0; j < side_length; j++) {
+    unsigned short N_unAssign = 0;
+    for (unsigned char i = 0; i < side_length; i++) {
+        for (unsigned char j = 0; j < side_length; j++) {
             if (board[i][j] == 0) {
                 N_unAssign++;
             }
@@ -96,7 +96,7 @@ int main(int argc, char *argv[]) {
     if (unAssignInd == NULL) {
         fprintf(stderr, "Memory allocation failed\n");
         // Free the allocated board memory before exiting.
-        for (int i = 0; i < side_length; i++) {
+        for (unsigned char i = 0; i < side_length; i++) {
             free(board[i]);
         }
         free(board);
@@ -104,9 +104,9 @@ int main(int argc, char *argv[]) {
     }
 
     // Fill the array with the positions of empty cells.
-    int count = 0;
-    for (int i = 0; i < side_length; i++) {
-        for (int j = 0; j < side_length; j++) {
+    unsigned short count = 0;
+    for (unsigned char i = 0; i < side_length; i++) {
+        for (unsigned char j = 0; j < side_length; j++) {
             if (board[i][j] == 0) {
                 unAssignInd[count].row = i;
                 unAssignInd[count].col = j;
@@ -130,7 +130,7 @@ int main(int argc, char *argv[]) {
 
 
     // Validate the finished board.
-    int result = validate_finished_board(board, side_length, base);
+    unsigned char result = validate_finished_board(board, side_length, base);
     if (result == 1) {
         fprintf(stderr, "Invalid row sum\n");
     } else if (result == 2) {
@@ -150,7 +150,7 @@ int main(int argc, char *argv[]) {
     // print_board(board, side_length, base);
 
     // Free the allocated memory.
-    for (int i = 0; i < side_length; i++) {
+    for (unsigned char i = 0; i < side_length; i++) {
         free(board[i]);
     }
     free(board);
@@ -162,26 +162,26 @@ int main(int argc, char *argv[]) {
 
 // Validates the board after placing a number at (row, col).
 // Returns 1 if valid, 0 if there is a duplicate in the row, column, or sub-box.
-int validate_input(unsigned char **board, int side_length, int base, int row, int col) {
-    int num = board[row][col];
+int validate_input(unsigned char **board, unsigned char side_length, unsigned char base, unsigned char row, unsigned char col) {
+    unsigned char num = board[row][col];
     if (num == 0)
         return 1; // An empty cell is considered valid.
 
     // Check the row for duplicates.
-    for (int j = 0; j < side_length; j++) {
+    for (unsigned char j = 0; j < side_length; j++) {
         if (j != col && board[row][j] == num)
             return 0;
     }
     // Check the column for duplicates.
-    for (int i = 0; i < side_length; i++) {
+    for (unsigned char i = 0; i < side_length; i++) {
         if (i != row && board[i][col] == num)
             return 0;
     }
     // Check the sub-box.
-    int startRow = row - row % base;
-    int startCol = col - col % base;
-    for (int i = startRow; i < startRow + base; i++) {
-        for (int j = startCol; j < startCol + base; j++) {
+    unsigned char startRow = row - row % base;
+    unsigned char startCol = col - col % base;
+    for (unsigned char i = startRow; i < startRow + base; i++) {
+        for (unsigned char j = startCol; j < startCol + base; j++) {
             if ((i != row || j != col) && board[i][j] == num)
                 return 0;
         }
@@ -191,18 +191,18 @@ int validate_input(unsigned char **board, int side_length, int base, int row, in
 
 // Recursively solves the Sudoku board using backtracking.
 // unAssignInd is an array of empty cell positions, and N_unAssign is the number of such cells left.
-int solve(unsigned char **board, Position *unAssignInd, int N_unAssign, int side_length, int base) {
+int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base) {
     // Base case: no unassigned positions remain.
     if (N_unAssign == 0)
         return 1;
     
     // Get the next empty cell from the unassigned list.
     Position pos = unAssignInd[N_unAssign - 1];
-    int row = pos.row;
-    int col = pos.col;
+    unsigned char row = pos.row;
+    unsigned char col = pos.col;
     
     // Try every possible value from 1 to side_length.
-    for (int val = 1; val <= side_length; val++) {
+    for (unsigned char val = 1; val <= side_length; val++) {
         board[row][col] = val; // Set the guess.
         if (validate_input(board, side_length, base, row, col)) {
             // Recursively try to solve with one fewer unassigned cell.
