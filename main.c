@@ -168,15 +168,27 @@ int validate_input(unsigned char **board, unsigned char side_length, unsigned ch
         return 1; // An empty cell is considered valid.
 
     // Check the row for duplicates.
-    for (unsigned char j = 0; j < side_length; j++) {
-        if (j != col && board[row][j] == num)
+    for (unsigned char j = 0; j < col; j++) {
+        if (board[row][j] == num)
             return 0;
     }
+    // Split the loop to avoid checking the same cell twice.
+    for (unsigned char j = col + 1; j < side_length; j++) {
+        if (board[row][j] == num)
+            return 0;
+    }
+    
     // Check the column for duplicates.
-    for (unsigned char i = 0; i < side_length; i++) {
-        if (i != row && board[i][col] == num)
+    for (unsigned char j = 0; j < row; j++) {
+        if (board[j][col] == num)
             return 0;
     }
+    // Split the loop to avoid checking the same cell twice.
+    for (unsigned char j = row + 1; j < side_length; j++) {
+        if (board[j][col] == num)
+            return 0;
+    }
+    
     // Check the sub-box.
     unsigned char startRow = row - row % base;
     unsigned char startCol = col - col % base;
