@@ -5,6 +5,8 @@ All the standerd error handling and comments are added by Copilot.
 #include <stdlib.h>
 #include <sys/time.h>
 #include <string.h>
+#include <stdint.h>
+#include <inttypes.h>
 #ifdef _OPENMP
     #include <omp.h>
     #define OPENMP_ENABLED 1
@@ -15,7 +17,10 @@ All the standerd error handling and comments are added by Copilot.
 // Global variables for solution found
 volatile int solution_found = 0;
 unsigned char **solution_board = NULL;
-
+// Global bit arrays for validation
+uint64_t *row_bits = NULL;
+uint64_t *col_bits = NULL;
+uint64_t *box_bits = NULL;
 
 // A structure to hold the coordinates of an empty cell.
 typedef struct {
@@ -28,7 +33,10 @@ void print_board(unsigned char **board, unsigned char side_length, unsigned char
 int validate_finished_board(unsigned char** board, unsigned char side_length, unsigned char base);
 int validate_input(unsigned char **board, unsigned char side_length, unsigned char base, unsigned char row, unsigned char col);
 unsigned char **copy_board(unsigned char **board, unsigned char side_length);
-int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, unsigned short serial_threshold);
+int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, unsigned short serial_threshold, uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits);
+void update_bits(unsigned char row, unsigned char col, unsigned char val, unsigned char base, uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits, int set_or_clear);
+int validate_input_bits(unsigned char **board, unsigned char side_length, unsigned char base, unsigned char row, unsigned char col, uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits);
+void init_bit_arrays(unsigned char **board, unsigned char side_length, unsigned char base);
 static double get_wall_seconds();
 
 
@@ -93,6 +101,7 @@ int main(int argc, char *argv[]) {
         }
     }
     fclose(file);
+    init_bit_arrays(board, side_length, base);
 
     // Count the number of empty cells.
     unsigned short N_unAssign = 0;
@@ -107,9 +116,9 @@ int main(int argc, char *argv[]) {
     // Set the threshold for switching to sequential backtracking.
     unsigned short serial_threshold;
     if (OPENMP_ENABLED) {
-        serial_threshold = N_unAssign - N_unAssign / 100;
+        serial_threshold = N_unAssign - N_unAssign / 10;
     } else {
-        serial_threshold = N_unAssign;
+        serial_threshold = N_unAssign+1;
     }
     
     printf("Serial threshold: %d\n", serial_threshold);
@@ -151,7 +160,7 @@ int main(int argc, char *argv[]) {
         // Start the recursive backtracking function.
         #pragma omp single nowait
         {
-            solve(board, unAssignInd, N_unAssign, side_length, base, serial_threshold);
+            solve(board, unAssignInd, N_unAssign, side_length, base, serial_threshold, row_bits, col_bits, box_bits);
         }
     }
     solving_time = get_wall_seconds() - solving_time;
@@ -164,20 +173,23 @@ int main(int argc, char *argv[]) {
 
 
     // Validate the finished board.
-    unsigned char result = validate_finished_board(solution_board, side_length, base);
-    if (result == 1) {
-        fprintf(stderr, "Invalid row sum\n");
-    } else if (result == 2) {
-        fprintf(stderr, "Invalid column sum\n");
-    } else if (result == 3) {
-        fprintf(stderr, "Invalid block sum\n");
-    } else {
-        printf("Board passed the last test!\n");
-        printf("Non-solving time: %.6f seconds\n", non_solving_time);
-        printf("Solving time: %.6f seconds\n", solving_time);
-    }
-    
+    if (solution_found && solution_board) {
+        unsigned char result = validate_finished_board(solution_board, side_length, base);
+        if (result == 1) {
+            fprintf(stderr, "Invalid row sum\n");
+        } else if (result == 2) {
+            fprintf(stderr, "Invalid column sum\n");
+        } else if (result == 3) {
+            fprintf(stderr, "Invalid block sum\n");
+        } else {
+            printf("Board passed the last test!\n");
+            printf("Non-solving time: %.6f seconds\n", non_solving_time);
+            printf("Solving time: %.6f seconds\n", solving_time);
+        }
 
+    } else {
+        printf("No solution to validate\n");
+    }
 
     // Print the solved board.
     // printf("Board:\n");
@@ -189,6 +201,9 @@ int main(int argc, char *argv[]) {
     }
     free(board);
     free(unAssignInd);
+    free(row_bits);
+    free(col_bits);
+    free(box_bits);
 
     if (solution_board) {
         for (unsigned char i = 0; i < side_length; i++) {
@@ -200,79 +215,72 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
+// Initialize bit arrays for fast validation
+void init_bit_arrays(unsigned char **board, unsigned char side_length, unsigned char base) {
+    // Allocate memory for bit arrays
+    row_bits = calloc(side_length, sizeof(uint64_t));
+    col_bits = calloc(side_length, sizeof(uint64_t));
+    box_bits = calloc(side_length, sizeof(uint64_t));
+    
+    if (!row_bits || !col_bits || !box_bits) {
+        fprintf(stderr, "Memory allocation failed for bit arrays\n");
+        return;
+    }
+
+    // Initialize with board values
+    for (unsigned char i = 0; i < side_length; i++) {
+        for (unsigned char j = 0; j < side_length; j++) {
+            unsigned char val = board[i][j];
+            if (val > 0) {
+                // Calculate box index
+                unsigned char box_idx = (i / base) * base + (j / base);
+                
+                // Set bits
+                row_bits[i] |= (1ULL << (val - 1));
+                col_bits[j] |= (1ULL << (val - 1));
+                box_bits[box_idx] |= (1ULL << (val - 1));
+            }
+        }
+    }
+}
 
 // Validates the board after placing a number at (row, col).
 // Returns 1 if valid, 0 if there is a duplicate in the row, column, or sub-box.
-int validate_input(unsigned char **board, unsigned char side_length, unsigned char base, unsigned char row, unsigned char col) {
-    unsigned char num = board[row][col];
-    if (num == 0)
-        return 1; // An empty cell is considered valid.
-
-    // Check the row for duplicates.
-    for (unsigned char j = 0; j < col; j++) {
-        if (board[row][j] == num)
-            return 0;
-    }
-    // Split the loop to avoid checking the same cell twice.
-    for (unsigned char j = col + 1; j < side_length; j++) {
-        if (board[row][j] == num)
-            return 0;
-    }
-    
-    // Check the column for duplicates.
-    for (unsigned char j = 0; j < row; j++) {
-        if (board[j][col] == num)
-            return 0;
-    }
-    // Split the loop to avoid checking the same cell twice.
-    for (unsigned char j = row + 1; j < side_length; j++) {
-        if (board[j][col] == num)
-            return 0;
-    }
-
-    // Check the sub-box.
-    unsigned char startRow = row - row % base;
-    unsigned char startCol = col - col % base;
-
-    // Version 1: Check the sub-box in a single loop.
-    // for (unsigned char i = startRow; i < startRow + base; i++) {
-    //     if (i == row)
-    //         continue;
-    //     for (unsigned char j = startCol; j < startCol + base; j++) {
-    //         if ( board[i][j] == num)
-    //             return 0;
-    //     }
-    // }
-
-    // Version 2: Check the sub-box in two loops.
-    // Split the loop to avoid checking the same cell twice.
-    // for (unsigned char i = startRow; i < startRow + base; i++) {
-    //     for (unsigned char j = startCol; j < col; j++) {
-    //         if (board[i][j] == num)
-    //             return 0;
-    //     }
-    //     for (unsigned char j = col + 1; j < startCol + base; j++) {
-    //         if (board[i][j] == num)
-    //             return 0;
-    //     }
-    // }
-
-
-    // Version 3: Check the sub-box in two loops.
-    // Split the loop to avoid checking the same cell twice.
-    for (unsigned char i = startRow; i < row; i++) {
-        for (unsigned char j = startCol; j < startCol + base; j++) {
-            if (board[i][j] == num)
-                return 0;
-        }
-    }
-    for (unsigned char i = row + 1; i < startRow + base; i++) {
-        for (unsigned char j = startCol; j < startCol + base; j++) {
-            if (board[i][j] == num)
-                return 0;
-        }
-    }
+// Optimized validation using bit arrays
+int is_valid_input(unsigned char row, unsigned char col, unsigned char val, unsigned char base,
+    uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits) {
+    uint64_t mask = 1ULL << (val - 1);
+    unsigned char box_idx = (row / base) * base + (col / base);
+    if (row_bits[row] & mask) return 0;
+    if (col_bits[col] & mask) return 0;
+    if (box_bits[box_idx] & mask) return 0;
     return 1;
+}
+
+
+// Update bit arrays when setting or unsetting a value
+void update_bits(unsigned char row, unsigned char col, unsigned char val, unsigned char base,
+    uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits, int set_or_clear) {
+
+    if (val == 0) return; // No update needed for empty cells
+
+    // Calculate box index
+    unsigned char box_idx = (row / base) * base + (col / base);
+
+    // Create mask for this value
+    uint64_t mask = 1ULL << (val - 1);
+
+    if (set_or_clear) {
+    // Set the bits
+    row_bits[row] |= mask;
+    col_bits[col] |= mask;
+    box_bits[box_idx] |= mask;
+    } else {
+    // Clear the bits
+    row_bits[row] &= ~mask;
+    col_bits[col] &= ~mask;
+    box_bits[box_idx] &= ~mask;
+    }
 }
 
 // Creates a deep copy of the Sudoku board.
@@ -287,7 +295,7 @@ unsigned char **copy_board(unsigned char **board, unsigned char side_length) {
 
 // Recursively solves the Sudoku board using backtracking.
 // unAssignInd is an array of empty cell positions, and N_unAssign is the number of such cells left.
-int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, unsigned short serial_threshold) {
+int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, unsigned short serial_threshold, uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits) {
     
     // Check if a solution has been found by another thread.
     if (solution_found) {
@@ -324,17 +332,35 @@ int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssig
 
             // Create a deep copy of the board.
             unsigned char **new_board = copy_board(board, side_length);
-            new_board[row][col] = val; // Set the guess.
+            // Create local bit arrays for validation
+            uint64_t *local_row_bits = malloc(side_length * sizeof(uint64_t));
+            uint64_t *local_col_bits = malloc(side_length * sizeof(uint64_t));
+            uint64_t *local_box_bits = malloc(side_length * sizeof(uint64_t));
+            
+            // Copy current bit state
+            memcpy(local_row_bits, row_bits, side_length * sizeof(uint64_t));
+            memcpy(local_col_bits, col_bits, side_length * sizeof(uint64_t));
+            memcpy(local_box_bits, box_bits, side_length * sizeof(uint64_t));
+            
 
             // Check if the guess is valid.
-            if (validate_input(new_board, side_length, base, row, col)) {
+            if (is_valid_input(row, col, val, base, local_row_bits, local_col_bits, local_box_bits)) {
+                
+                new_board[row][col] = val; // Set the guess.
+                // Update bit arrays
+                update_bits(row, col, val, base, local_row_bits, local_col_bits, local_box_bits, 1);
                 // Recursively try to solve with one fewer unassigned cell.
-                if (solve(new_board, unAssignInd, N_unAssign - 1, side_length, base, serial_threshold)) {
+                if (solve(new_board, unAssignInd, N_unAssign - 1, side_length, base, serial_threshold, local_row_bits, local_col_bits, local_box_bits)) {
                     #pragma omp critical
                     {
                     local_solution_found = 1;
                     }}
         }
+        // Free local bit arrays
+        free(local_row_bits);
+        free(local_col_bits);
+        free(local_box_bits);
+
         // Free the memory for the new board.
         for (int i = 0; i < side_length; i++) {
             free(new_board[i]);
@@ -349,13 +375,22 @@ int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssig
 else {
     // Sequential in-place backtracking: modify board directly and restore afterward.
     for (unsigned char val = 1; val <= side_length; val++) {
-        board[row][col] = val;
-        if (validate_input(board, side_length, base, row, col)) {
-            if (solve(board, unAssignInd, N_unAssign - 1, side_length, base, serial_threshold))
+
+        // Check if valid
+        if (is_valid_input(row, col, val, base, row_bits, col_bits, box_bits)) {
+            board[row][col] = val; // Set the guess.
+            // Update bit arrays
+            update_bits(row, col, val, base, row_bits, col_bits, box_bits, 1);
+
+            if (solve(board, unAssignInd, N_unAssign - 1, side_length, base, serial_threshold, row_bits, col_bits, box_bits)) {
                 return 1;
         }
-    }
-    board[row][col] = 0; // Reset the cell.
+        
+        // Undo the bit update when backtracking
+        update_bits(row, col, val, base, row_bits, col_bits, box_bits, 0);
+        
+        board[row][col] = 0; // Reset the cell
+    }}
     return 0;
 }
 }
@@ -363,8 +398,8 @@ else {
 
 int validate_finished_board(unsigned char** board, unsigned char side_length, unsigned char base) {
     // Calculate the target sum for each row, column, and block.
-    int target_sum = side_length * (side_length + 1) / 2;
-    int row_sum, col_sum, block_sum;
+    int64_t target_sum = side_length * (side_length + 1) / 2;
+    int64_t row_sum, col_sum, block_sum;
 
     // Check the sum of each row and column.
     for (int i = 0; i < side_length; i++) {
