@@ -105,7 +105,13 @@ int main(int argc, char *argv[]) {
     }
 
     // Set the threshold for switching to sequential backtracking.
-    unsigned short serial_threshold = N_unAssign - N_unAssign / 100;
+    unsigned short serial_threshold;
+    if (OPENMP_ENABLED) {
+        serial_threshold = N_unAssign - N_unAssign / 100;
+    } else {
+        serial_threshold = N_unAssign;
+    }
+    
     printf("Serial threshold: %d\n", serial_threshold);
 
     // Create an array to store the positions of empty cells.
@@ -227,9 +233,42 @@ int validate_input(unsigned char **board, unsigned char side_length, unsigned ch
     // Check the sub-box.
     unsigned char startRow = row - row % base;
     unsigned char startCol = col - col % base;
-    for (unsigned char i = startRow; i < startRow + base; i++) {
+
+    // Version 1: Check the sub-box in a single loop.
+    // for (unsigned char i = startRow; i < startRow + base; i++) {
+    //     if (i == row)
+    //         continue;
+    //     for (unsigned char j = startCol; j < startCol + base; j++) {
+    //         if ( board[i][j] == num)
+    //             return 0;
+    //     }
+    // }
+
+    // Version 2: Check the sub-box in two loops.
+    // Split the loop to avoid checking the same cell twice.
+    // for (unsigned char i = startRow; i < startRow + base; i++) {
+    //     for (unsigned char j = startCol; j < col; j++) {
+    //         if (board[i][j] == num)
+    //             return 0;
+    //     }
+    //     for (unsigned char j = col + 1; j < startCol + base; j++) {
+    //         if (board[i][j] == num)
+    //             return 0;
+    //     }
+    // }
+
+
+    // Version 3: Check the sub-box in two loops.
+    // Split the loop to avoid checking the same cell twice.
+    for (unsigned char i = startRow; i < row; i++) {
         for (unsigned char j = startCol; j < startCol + base; j++) {
-            if ((i != row || j != col) && board[i][j] == num)
+            if (board[i][j] == num)
+                return 0;
+        }
+    }
+    for (unsigned char i = row + 1; i < startRow + base; i++) {
+        for (unsigned char j = startCol; j < startCol + base; j++) {
+            if (board[i][j] == num)
                 return 0;
         }
     }
