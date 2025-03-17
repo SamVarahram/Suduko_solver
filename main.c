@@ -21,6 +21,8 @@ unsigned char **solution_board = NULL;
 typedef struct {
     unsigned char row;
     unsigned char col;
+    unsigned char posibilities;
+    unsigned char value;
 } Position;
 
 // Function declarations.
@@ -28,7 +30,9 @@ void print_board(unsigned char **board, unsigned char side_length, unsigned char
 int validate_finished_board(unsigned char** board, unsigned char side_length, unsigned char base);
 int validate_input(unsigned char **board, unsigned char side_length, unsigned char base, unsigned char row, unsigned char col);
 unsigned char **copy_board(unsigned char **board, unsigned char side_length);
-int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, unsigned short serial_threshold);
+void compute_possibilities(unsigned char **board, unsigned char side_length, unsigned char base, Position *cells, unsigned short n_unAssign);
+int compare_positions(const void *a, const void *b);
+int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base);
 static double get_wall_seconds();
 
 
@@ -104,15 +108,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Set the threshold for switching to sequential backtracking.
-    unsigned short serial_threshold;
-    if (OPENMP_ENABLED) {
-        serial_threshold = N_unAssign - N_unAssign / 100;
-    } else {
-        serial_threshold = N_unAssign;
-    }
-    
-    printf("Serial threshold: %d\n", serial_threshold);
 
     // Create an array to store the positions of empty cells.
     Position *unAssignInd = malloc(N_unAssign * sizeof(Position));
@@ -143,15 +138,21 @@ int main(int argc, char *argv[]) {
 
     double solving_time = get_wall_seconds();
 
+    // Compute the possibilities for each unassigned cell.
+    compute_possibilities(board, side_length, base, unAssignInd, N_unAssign);
+    // Sort the unassigned cells based on the number of possibilities.
+    qsort(unAssignInd, N_unAssign, sizeof(Position), compare_positions);
+
     // Solve the Sudoku board using backtracking.
     // The solution is stored in the global variable solution_board.
     // The solution_found flag is also set to 1 if a solution is found.
+    printf("Number of unassigned cells: %d\n", N_unAssign);
     #pragma omp parallel
     {
         // Start the recursive backtracking function.
         #pragma omp single nowait
         {
-            solve(board, unAssignInd, N_unAssign, side_length, base, serial_threshold);
+            solve(board, unAssignInd, N_unAssign, side_length, base);
         }
     }
     solving_time = get_wall_seconds() - solving_time;
@@ -285,9 +286,38 @@ unsigned char **copy_board(unsigned char **board, unsigned char side_length) {
     return new_board;
 }
 
+// Compute possibilities for each unassigned cell.
+void compute_possibilities(unsigned char **board, unsigned char side_length, unsigned char base, Position *cells, unsigned short n_unAssign) {
+    //#pragma omp parallel for schedule(static)
+    for (unsigned short i = 0; i < n_unAssign; i++) {
+        unsigned char value = 0;
+        unsigned char count = 0;
+        unsigned char row = cells[i].row;
+        unsigned char col = cells[i].col;
+        for (unsigned char val = 1; val <= side_length; val++) {
+            board[row][col] = val;
+            if (validate_input(board, side_length, base, row, col)) {
+                count++;
+                value = val;
+
+            }
+        }
+        board[row][col] = 0;
+        cells[i].posibilities = count;
+        cells[i].value = value;
+    }
+}
+
+// Comparator to sort in descending order so that the cell with fewest possibilities ends up last.
+int compare_positions(const void *a, const void *b) {
+    const Position *p1 = (const Position *)a;
+    const Position *p2 = (const Position *)b;
+    return p2->posibilities - p1->posibilities;
+}
+
 // Recursively solves the Sudoku board using backtracking.
 // unAssignInd is an array of empty cell positions, and N_unAssign is the number of such cells left.
-int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, unsigned short serial_threshold) {
+int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base) {
     
     // Check if a solution has been found by another thread.
     if (solution_found) {
@@ -305,17 +335,23 @@ int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssig
         return 1;
     }
     
+
+    // If the last cell has more than one possibility, try to resort the unassigned cells.
+    if (unAssignInd[N_unAssign - 1].posibilities != 1) {
+        compute_possibilities(board, side_length, base, unAssignInd, N_unAssign);
+        qsort(unAssignInd, N_unAssign, sizeof(Position), compare_positions);
+    }
+
     // Get the next empty cell from the unassigned list.
     Position pos = unAssignInd[N_unAssign - 1];
     unsigned char row = pos.row;
     unsigned char col = pos.col;
-
-    if (N_unAssign > serial_threshold) {
-        
     int local_solution_found = 0;
-    
-    // Try every possible value from 1 to side_length.
+        
+   if (pos.posibilities > 1) {
+        
 
+    // Try every possible value from 1 to side_length.
     for (unsigned char val = 1; val <= side_length; val++) {
         #pragma omp task firstprivate(val) shared(solution_found, local_solution_found)
         {
@@ -329,7 +365,7 @@ int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssig
             // Check if the guess is valid.
             if (validate_input(new_board, side_length, base, row, col)) {
                 // Recursively try to solve with one fewer unassigned cell.
-                if (solve(new_board, unAssignInd, N_unAssign - 1, side_length, base, serial_threshold)) {
+                if (solve(new_board, unAssignInd, N_unAssign - 1, side_length, base)) {
                     #pragma omp critical
                     {
                     local_solution_found = 1;
@@ -341,24 +377,19 @@ int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssig
         }
         free(new_board);
         }}
-    }
+    }}
+    else {
+        board[row][col] = pos.value;
+        if (validate_input(board, side_length, base, row, col)) {
+            if (solve(board, unAssignInd, N_unAssign - 1, side_length, base)) {
+                local_solution_found = 1;
+            }
+        }}
     // Wait for all tasks to finish before returning.
     #pragma omp taskwait
     return local_solution_found;
 }
-else {
-    // Sequential in-place backtracking: modify board directly and restore afterward.
-    for (unsigned char val = 1; val <= side_length; val++) {
-        board[row][col] = val;
-        if (validate_input(board, side_length, base, row, col)) {
-            if (solve(board, unAssignInd, N_unAssign - 1, side_length, base, serial_threshold))
-                return 1;
-        }
-    }
-    board[row][col] = 0; // Reset the cell.
-    return 0;
-}
-}
+
 
 
 int validate_finished_board(unsigned char** board, unsigned char side_length, unsigned char base) {
