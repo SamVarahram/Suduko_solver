@@ -17,6 +17,7 @@ All the standerd error handling and comments are added by Copilot.
 // Global variables for solution found
 volatile int solution_found = 0;
 unsigned char **solution_board = NULL;
+int max_depth;
 // Global bit arrays for validation
 uint64_t *row_bits = NULL;
 uint64_t *col_bits = NULL;
@@ -33,7 +34,7 @@ void print_board(unsigned char **board, unsigned char side_length, unsigned char
 int validate_finished_board(unsigned char** board, unsigned char side_length, unsigned char base);
 int validate_input(unsigned char **board, unsigned char side_length, unsigned char base, unsigned char row, unsigned char col);
 unsigned char **copy_board(unsigned char **board, unsigned char side_length);
-int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, unsigned short serial_threshold, uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits);
+int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, int depth, uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits);
 void update_bits(unsigned char row, unsigned char col, unsigned char val, unsigned char base, uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits, int set_or_clear);
 int validate_input_bits(unsigned char **board, unsigned char side_length, unsigned char base, unsigned char row, unsigned char col, uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits);
 void init_bit_arrays(unsigned char **board, unsigned char side_length, unsigned char base);
@@ -122,18 +123,16 @@ int main(int argc, char *argv[]) {
     }
 
     // Set the threshold for switching to sequential backtracking.
-    unsigned short serial_threshold;
+    int depth = 0;
     if (OPENMP_ENABLED) {
         if (side_length == 64) {
-            serial_threshold = N_unAssign - N_unAssign / 80;
+            max_depth = 20;
         } else {
-            serial_threshold = N_unAssign - N_unAssign / 100;
+            max_depth = 4;
         }
     } else {
-        serial_threshold = N_unAssign+1;
+        max_depth = 0;
     }
-    
-    printf("Serial threshold: %d\n", serial_threshold);
 
     // Create an array to store the positions of empty cells.
     Position *unAssignInd = malloc(N_unAssign * sizeof(Position));
@@ -172,7 +171,7 @@ int main(int argc, char *argv[]) {
         // Start the recursive backtracking function.
         #pragma omp single nowait
         {
-            solve(board, unAssignInd, N_unAssign, side_length, base, serial_threshold, row_bits, col_bits, box_bits);
+            solve(board, unAssignInd, N_unAssign, side_length, base, depth, row_bits, col_bits, box_bits);
         }
     }
     solving_time = get_wall_seconds() - solving_time;
@@ -307,7 +306,7 @@ unsigned char **copy_board(unsigned char **board, unsigned char side_length) {
 
 // Recursively solves the Sudoku board using backtracking.
 // unAssignInd is an array of empty cell positions, and N_unAssign is the number of such cells left.
-int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, unsigned short serial_threshold, uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits) {
+int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, int depth, uint64_t *row_bits, uint64_t *col_bits, uint64_t *box_bits) {
     
     // Check if a solution has been found by another thread.
     if (solution_found) {
@@ -330,7 +329,7 @@ int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssig
     unsigned char row = pos.row;
     unsigned char col = pos.col;
 
-    if (N_unAssign > serial_threshold) {
+    if (depth < max_depth) {
         
     int local_solution_found = 0;
     
@@ -362,7 +361,7 @@ int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssig
                 // Update bit arrays
                 update_bits(row, col, val, base, local_row_bits, local_col_bits, local_box_bits, 1);
                 // Recursively try to solve with one fewer unassigned cell.
-                if (solve(new_board, unAssignInd, N_unAssign - 1, side_length, base, serial_threshold, local_row_bits, local_col_bits, local_box_bits)) {
+                if (solve(new_board, unAssignInd, N_unAssign - 1, side_length, base, depth + 1, local_row_bits, local_col_bits, local_box_bits)) {
                     #pragma omp critical
                     {
                     local_solution_found = 1;
@@ -394,7 +393,7 @@ else {
             // Update bit arrays
             update_bits(row, col, val, base, row_bits, col_bits, box_bits, 1);
 
-            if (solve(board, unAssignInd, N_unAssign - 1, side_length, base, serial_threshold, row_bits, col_bits, box_bits)) {
+            if (solve(board, unAssignInd, N_unAssign - 1, side_length, base, depth + 1, row_bits, col_bits, box_bits)) {
                 return 1;
         }
         
