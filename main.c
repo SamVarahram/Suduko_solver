@@ -116,7 +116,11 @@ int main(int argc, char *argv[]) {
     // Set the threshold for switching to sequential backtracking.
     unsigned short serial_threshold;
     if (OPENMP_ENABLED) {
-        serial_threshold = N_unAssign - N_unAssign / 10;
+        if (side_length == 64) {
+            serial_threshold = N_unAssign - N_unAssign / 80;
+        } else {
+            serial_threshold = N_unAssign - N_unAssign / 100;
+        }
     } else {
         serial_threshold = N_unAssign+1;
     }
