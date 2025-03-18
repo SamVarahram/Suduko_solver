@@ -43,10 +43,18 @@ static double get_wall_seconds();
 int main(int argc, char *argv[]) {
     double non_solving_time = get_wall_seconds();
 
-    // Check if a filename is provided.
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <board_file>\n", argv[0]);
-        return 1;
+     // Check if a filename is provided.
+     if (OPENMP_ENABLED) {
+        if (argc != 3) {
+            fprintf(stderr, "Usage: %s <board_file> <Nthreads\n", argv[0]);
+            return 1;
+        }
+        omp_set_num_threads(atoi(argv[2]));
+    } else {
+        if (argc != 2) {
+            fprintf(stderr, "Usage: %s <board_file>\n", argv[0]);
+            return 1;
+        }
     }
 
     // Open the file in binary mode.
