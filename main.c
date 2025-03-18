@@ -15,6 +15,7 @@ All the standerd error handling and comments are added by Copilot.
 // Global variables for solution found
 volatile int solution_found = 0;
 unsigned char **solution_board = NULL;
+int max_task_depth;
 
 
 // A structure to hold the coordinates of an empty cell.
@@ -28,17 +29,25 @@ void print_board(unsigned char **board, unsigned char side_length, unsigned char
 int validate_finished_board(unsigned char** board, unsigned char side_length, unsigned char base);
 int validate_input(unsigned char **board, unsigned char side_length, unsigned char base, unsigned char row, unsigned char col);
 unsigned char **copy_board(unsigned char **board, unsigned char side_length);
-int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, unsigned short serial_threshold);
+int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, int depth);
 static double get_wall_seconds();
 
 
 int main(int argc, char *argv[]) {
     double non_solving_time = get_wall_seconds();
 
-    // Check if a filename is provided.
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <board_file>\n", argv[0]);
-        return 1;
+     // Check if a filename is provided.
+     if (OPENMP_ENABLED) {
+        if (argc != 3) {
+            fprintf(stderr, "Usage: %s <board_file> <Nthreads\n", argv[0]);
+            return 1;
+        }
+        omp_set_num_threads(atoi(argv[2]));
+    } else {
+        if (argc != 2) {
+            fprintf(stderr, "Usage: %s <board_file>\n", argv[0]);
+            return 1;
+        }
     }
 
     // Open the file in binary mode.
@@ -105,14 +114,13 @@ int main(int argc, char *argv[]) {
     }
 
     // Set the threshold for switching to sequential backtracking.
-    unsigned short serial_threshold;
+    int depth = 0;
     if (OPENMP_ENABLED) {
-        serial_threshold = N_unAssign - N_unAssign / 100;
+        max_task_depth = 4;
     } else {
-        serial_threshold = N_unAssign;
+        max_task_depth = 0;
     }
     
-    printf("Serial threshold: %d\n", serial_threshold);
 
     // Create an array to store the positions of empty cells.
     Position *unAssignInd = malloc(N_unAssign * sizeof(Position));
@@ -151,7 +159,7 @@ int main(int argc, char *argv[]) {
         // Start the recursive backtracking function.
         #pragma omp single nowait
         {
-            solve(board, unAssignInd, N_unAssign, side_length, base, serial_threshold);
+            solve(board, unAssignInd, N_unAssign, side_length, base, depth);
         }
     }
     solving_time = get_wall_seconds() - solving_time;
@@ -287,7 +295,7 @@ unsigned char **copy_board(unsigned char **board, unsigned char side_length) {
 
 // Recursively solves the Sudoku board using backtracking.
 // unAssignInd is an array of empty cell positions, and N_unAssign is the number of such cells left.
-int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, unsigned short serial_threshold) {
+int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssign, unsigned char side_length, unsigned char base, int depth) {
     
     // Check if a solution has been found by another thread.
     if (solution_found) {
@@ -310,7 +318,7 @@ int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssig
     unsigned char row = pos.row;
     unsigned char col = pos.col;
 
-    if (N_unAssign > serial_threshold) {
+    if (depth < max_task_depth) {
         
     int local_solution_found = 0;
     
@@ -329,7 +337,7 @@ int solve(unsigned char **board, Position *unAssignInd, unsigned short N_unAssig
             // Check if the guess is valid.
             if (validate_input(new_board, side_length, base, row, col)) {
                 // Recursively try to solve with one fewer unassigned cell.
-                if (solve(new_board, unAssignInd, N_unAssign - 1, side_length, base, serial_threshold)) {
+                if (solve(new_board, unAssignInd, N_unAssign - 1, side_length, base, depth + 1)) {
                     #pragma omp critical
                     {
                     local_solution_found = 1;
@@ -351,7 +359,7 @@ else {
     for (unsigned char val = 1; val <= side_length; val++) {
         board[row][col] = val;
         if (validate_input(board, side_length, base, row, col)) {
-            if (solve(board, unAssignInd, N_unAssign - 1, side_length, base, serial_threshold))
+            if (solve(board, unAssignInd, N_unAssign - 1, side_length, base, depth + 1))
                 return 1;
         }
     }
